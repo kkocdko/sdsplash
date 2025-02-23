@@ -4,19 +4,17 @@
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
-#include <xf86drm.h>
-#include <xf86drmMode.h>
-
-#include <rlottie.h>
 
 #include <vector>
 
-int main() {
-  // auto view = rlottie::
-  auto player = rlottie::Animation::loadFromFile("lottie.json");
-  // rlottie::Animation()
-  // printf("frameRate=%f\n", player->frameRate());
+#include "xf86drm.h"
+#include "xf86drmMode.h"
 
+#include "thorvg.h"
+
+#include "rapidjson/document.h"
+
+int main() {
   // Open DRM device
   int fd = -1;
   char dev_path[] = "/dev/dri/card*";
@@ -30,59 +28,58 @@ int main() {
   }
 
   // Define many vars
-  drmModeRes *drm_resources = NULL;
-  drmModeConnector *drm_connector = NULL;
-  drmModeModeInfo *drm_mode = NULL;
-  drmModeCrtc *drm_crtc = NULL;
+  drmModeRes *res = NULL;
+  drmModeConnector *conn = NULL;
+  drmModeModeInfo *mode = NULL;
+  drmModeCrtc *crtc = NULL;
   uint32_t fb_handle = 0;
   uint32_t fb_pitch = 0;
   uint64_t fb_size = 0;
   uint32_t fb_id = 0;
   uint64_t fb_offset = 0;
   uint32_t *fb_vaddr = NULL;
-  struct timespec t1 = {}, t2 = {};
 
   // Get DRM resources
-  drm_resources = drmModeGetResources(fd);
-  if (!drm_resources) {
+  res = drmModeGetResources(fd);
+  if (!res) {
     perror("Failed to get DRM resources");
     goto cleanup;
   }
 
   // Find connected connector
-  for (int i = 0; i < drm_resources->count_connectors; i++) {
-    drm_connector = drmModeGetConnector(fd, drm_resources->connectors[i]);
-    if (drm_connector->connection == DRM_MODE_CONNECTED) {
+  for (int i = 0; i < res->count_connectors; i++) {
+    conn = drmModeGetConnector(fd, res->connectors[i]);
+    if (conn->connection == DRM_MODE_CONNECTED) {
       break;
     } else {
-      drmModeFreeConnector(drm_connector);
-      drm_connector = NULL;
+      drmModeFreeConnector(conn);
+      conn = NULL;
     }
   }
-  if (drm_connector == NULL) {
+  if (conn == NULL) {
     perror("No connected display found");
     goto cleanup;
   }
-  if (drm_connector->count_modes == 0) {
+  if (conn->count_modes == 0) {
     perror("No valid mode for connector");
     goto cleanup;
   }
 
   // Use the first mode
-  drm_mode = &drm_connector->modes[0];
+  mode = &conn->modes[0];
 
   // Store CRTC
-  drm_crtc = drmModeGetCrtc(fd, drm_resources->crtcs[0]);
+  crtc = drmModeGetCrtc(fd, res->crtcs[0]);
 
   // Create dumb buffer
-  if (drmModeCreateDumbBuffer(fd, drm_mode->hdisplay, drm_mode->vdisplay, 32, 0,
+  if (drmModeCreateDumbBuffer(fd, mode->hdisplay, mode->vdisplay, 32, 0,
                               &fb_handle, &fb_pitch, &fb_size) != 0) {
     perror("Failed to create dumb buffer");
     goto cleanup;
   }
 
   // Create framebuffer
-  if (drmModeAddFB(fd, drm_mode->hdisplay, drm_mode->vdisplay, 24, 32, fb_pitch,
+  if (drmModeAddFB(fd, mode->hdisplay, mode->vdisplay, 24, 32, fb_pitch,
                    fb_handle, &fb_id) != 0) {
     perror("Failed to create framebuffer");
     goto cleanup;
@@ -105,89 +102,73 @@ int main() {
   memset(fb_vaddr, 0, fb_size);
 
   // Set display mode
-  if (drmModeSetCrtc(fd, drm_crtc->crtc_id, fb_id, 0, 0,
-                     &drm_connector->connector_id, 1, drm_mode) != 0) {
+  if (drmModeSetCrtc(fd, crtc->crtc_id, fb_id, 0, 0, &conn->connector_id, 1,
+                     mode) != 0) {
     perror("Failed to set mode");
     goto cleanup;
   }
 
-  printf("totalFrame=%ld\n", player->totalFrame());
   {
-     clock_gettime(CLOCK_MONOTONIC, &t1);
- 
-    std::vector<uint32_t> frame(drm_mode->hdisplay * drm_mode->vdisplay);
-    rlottie::Surface surface(frame.data(), drm_mode->hdisplay,
-                             drm_mode->vdisplay,
-                             drm_mode->hdisplay * sizeof(uint32_t));
-    surface.setDrawRegion(0, 0, 400, 400);
+    tvg::Initializer::init(0, tvg::CanvasEngine::Sw);
+
     std::vector<std::vector<uint32_t>> frames;
-    for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
-      player->renderSync(i, surface);
+
+    size_t v_w = 400;
+    size_t v_h = 400;
+    std::vector<uint32_t> frame(v_w * v_h);
+
+    auto canvas = tvg::SwCanvas::gen();
+    canvas->target(frame.data(), v_w, v_w, v_h, tvg::ColorSpace::ARGB8888);
+
+    auto animation = tvg::Animation::gen();
+    auto picture = animation->picture();
+    picture->load("lottie.json");
+    picture->size(400, 400);
+    canvas->push(picture);
+
+    for (size_t i = 0, l = animation->totalFrame(); i < l; i++) {
+      memset(frame.data(), 0, frame.size() * sizeof(uint32_t));
+      animation->frame(i);
+      canvas->update();
+      canvas->draw();
+      canvas->sync();
       frames.push_back(frame);
     }
 
-      clock_gettime(CLOCK_MONOTONIC, &t2);
-    long long elapsed_ns =
-        1000000000ll * (t2.tv_sec - t1.tv_sec) + (t2.tv_nsec - t1.tv_nsec);
-  printf("elapsed_ms=%lld\n", elapsed_ns/1000000);
-// for(int jj=0;jj<9;jj++){
-//     for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
-//       memcpy((void *)fb_vaddr, frames[i].data(), fb_size);
+    for (uint32_t i = 0; i < animation->totalFrame(); i++) {
+      for (size_t y = 0; y != v_h; y++) {
+        memcpy(fb_vaddr + y * mode->hdisplay, frames[i].data() + y * v_w,
+               v_w * sizeof(uint32_t));
+      }
 
-//       // usleep(1000000 / 15);
+      drmVBlank vbl = {};
+      vbl.request.type = DRM_VBLANK_RELATIVE;
+      vbl.request.sequence = 1;
+      if (drmWaitVBlank(fd, &vbl) != 0) {
+        perror("Failed to call drmWaitVBlank");
+        goto cleanup;
+      }
+    }
 
-//       drmVBlank vbl = {};
-//       vbl.request.type = DRM_VBLANK_RELATIVE;
-//       vbl.request.sequence = 1;
-//       if (drmWaitVBlank(fd, &vbl) != 0) {
-//         perror("Failed to call drmWaitVBlank");
-//         goto cleanup;
-//       }
-//     }
-// }
+    tvg::Initializer::term();
   }
-  // clock_gettime(CLOCK_MONOTONIC, &t1);
-  // for (uint32_t i = 0;; i++) {
-  //   clock_gettime(CLOCK_MONOTONIC, &t2);
-  //   long long elapsed_ns =
-  //       1000000000ll * (t2.tv_sec - t1.tv_sec) + (t2.tv_nsec - t1.tv_nsec);
-  //   if (elapsed_ns > 3000000000ll) {
-  //     break;
-  //   }
-
-  //   for (uint32_t y = 100; y < 100 + 320; y++) {
-  //     for (uint32_t x = 100; x < 100 + 240; x++) {
-  //       uint32_t c = ((i + x) * 2 & 0xff) + (((i + y) * 2 & 0xff) << 8);
-  //       fb_vaddr[y * (fb_pitch / sizeof(uint32_t)) + x] = c;
-  //     }
-  //   }
-
-  //   drmVBlank vbl = {};
-  //   vbl.request.type = DRM_VBLANK_RELATIVE;
-  //   vbl.request.sequence = 1;
-  //   if (drmWaitVBlank(fd, &vbl) != 0) {
-  //     perror("Failed to call drmWaitVBlank");
-  //     goto cleanup;
-  //   }
-  // }
 
 cleanup:
-  if (drm_crtc)
-    drmModeSetCrtc(fd, drm_crtc->crtc_id, drm_crtc->buffer_id, drm_crtc->x,
-                   drm_crtc->y, &drm_connector->connector_id, 1,
-                   &drm_crtc->mode);
-  if (drm_crtc)
-    drmModeFreeCrtc(drm_crtc);
+  if (crtc)
+    drmModeSetCrtc(fd, crtc->crtc_id, crtc->buffer_id, crtc->x, crtc->y,
+                   &conn->connector_id, 1, &crtc->mode);
+  if (crtc)
+    drmModeFreeCrtc(crtc);
   if (fb_vaddr)
     munmap(fb_vaddr, fb_size);
   if (fb_id)
     drmModeRmFB(fd, fb_id);
   if (fb_handle)
     drmModeDestroyDumbBuffer(fd, fb_handle);
-  if (drm_connector != NULL)
-    drmModeFreeConnector(drm_connector);
-  if (drm_resources)
-    drmModeFreeResources(drm_resources);
+  if (conn != NULL)
+    drmModeFreeConnector(conn);
+  if (res)
+    drmModeFreeResources(res);
   close(fd);
   return 0;
 }

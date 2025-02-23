@@ -17,7 +17,17 @@
 - multi thread soft render
 - LOTTIE_THREAD_SUPPORT = off
 - bench: rlottie = 1439ms
+- https://github.com/Samsung/rlottie/issues/551
 
 ```
 cmake -B build -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=True && cmake --build build
+
+meson setup build
+meson setup builddir -Dloaders="lottie" -Dextra="" --reconfigure
+
+meson setup builddir
+meson compile -C builddir
+
+rm -rf build ; meson setup --reconfigure build -Dbuildtype=release
+meson compile -C build
 ```
