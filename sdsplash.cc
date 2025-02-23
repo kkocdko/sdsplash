@@ -7,31 +7,46 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <rlottie.h>
+
 int main() {
+  // auto view = rlottie::
+  auto player = rlottie::Animation::loadFromFile("lottie.json");
+  printf("frameRate=%f\n", player->frameRate());
+
   // Open DRM device
   int fd = -1;
-  char drm_device_path[] = "/dev/dri/card*";
-  for (char i = 0; i < 9; i++) {
-    drm_device_path[sizeof(drm_device_path) - 1 - 1] = '0' + i;
-    fd = open(drm_device_path, O_RDWR | O_CLOEXEC);
-    if (!(fd < 0)) {
-      break;
-    }
+  char dev_path[] = "/dev/dri/card*";
+  for (char i = 0; i < 9 && fd == -1; i++) {
+    dev_path[sizeof(dev_path) - 1 - 1] = '0' + i;
+    fd = open(dev_path, O_RDWR | O_CLOEXEC);
   }
-  if (fd < 0) {
+  if (fd == -1) {
     perror("Failed to open DRM device");
     return 1;
   }
 
+  // Define many vars
+  drmModeRes *drm_resources = NULL;
+  drmModeConnector *drm_connector = NULL;
+  drmModeModeInfo *drm_mode = NULL;
+  drmModeCrtc *drm_crtc = NULL;
+  uint32_t fb_handle = 0;
+  uint32_t fb_pitch = 0;
+  uint64_t fb_size = 0;
+  uint32_t fb_id = 0;
+  uint64_t fb_offset = 0;
+  uint32_t *fb_vaddr = NULL;
+  struct timespec t1 = {}, t2 = {};
+
   // Get DRM resources
-  drmModeRes *drm_resources = drmModeGetResources(fd);
+  drm_resources = drmModeGetResources(fd);
   if (!drm_resources) {
     perror("Failed to get DRM resources");
     goto cleanup;
   }
 
   // Find connected connector
-  drmModeConnector *drm_connector = NULL;
   for (int i = 0; i < drm_resources->count_connectors; i++) {
     drm_connector = drmModeGetConnector(fd, drm_resources->connectors[i]);
     if (drm_connector->connection == DRM_MODE_CONNECTED) {
@@ -51,15 +66,12 @@ int main() {
   }
 
   // Use the first mode
-  drmModeModeInfo *drm_mode = &drm_connector->modes[0];
+  drm_mode = &drm_connector->modes[0];
 
   // Store CRTC
-  drmModeCrtc *drm_crtc = drmModeGetCrtc(fd, drm_resources->crtcs[0]);
+  drm_crtc = drmModeGetCrtc(fd, drm_resources->crtcs[0]);
 
   // Create dumb buffer
-  uint32_t fb_handle = 0;
-  uint32_t fb_pitch = 0;
-  uint64_t fb_size = 0;
   if (drmModeCreateDumbBuffer(fd, drm_mode->hdisplay, drm_mode->vdisplay, 32, 0,
                               &fb_handle, &fb_pitch, &fb_size) != 0) {
     perror("Failed to create dumb buffer");
@@ -67,7 +79,6 @@ int main() {
   }
 
   // Create framebuffer
-  uint32_t fb_id = 0;
   if (drmModeAddFB(fd, drm_mode->hdisplay, drm_mode->vdisplay, 24, 32, fb_pitch,
                    fb_handle, &fb_id) != 0) {
     perror("Failed to create framebuffer");
@@ -75,14 +86,13 @@ int main() {
   }
 
   // Map the buffer
-  uint64_t fb_offset = 0;
   if (drmModeMapDumbBuffer(fd, fb_handle, &fb_offset) != 0) {
     perror("Failed to map dumb buffer");
     goto cleanup;
   }
 
-  uint32_t *fb_vaddr =
-      mmap(0, fb_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, fb_offset);
+  fb_vaddr = (uint32_t *)mmap(0, fb_size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                              fd, fb_offset);
   if (fb_vaddr == MAP_FAILED) {
     perror("Failed to mmap buffer");
     goto cleanup;
@@ -98,27 +108,18 @@ int main() {
     goto cleanup;
   }
 
-  struct timespec t1 = {0}, t2 = {0};
-  clock_gettime(CLOCK_MONOTONIC, &t1);
-  for (uint32_t i = 0;; i++) {
-    clock_gettime(CLOCK_MONOTONIC, &t2);
-    long long elapsed_ns =
-        1000000000ll * (t2.tv_sec - t1.tv_sec) + (t2.tv_nsec - t1.tv_nsec);
-    if (elapsed_ns > 5000000000ll) {
-      break;
-    }
+  printf("totalFrame=%ld\n", player->totalFrame());
+  for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
 
-    for (uint32_t y = 100; y < 100 + 320; y++) {
-      for (uint32_t x = 100; x < 100 + 240; x++) {
-        uint32_t c = ((i + x) * 2 & 0xff) + (((i + y) * 2 & 0xff) << 8);
-        fb_vaddr[y * (fb_pitch / sizeof(uint32_t)) + x] = c;
-      }
-    }
+    rlottie::Surface surface(fb_vaddr, drm_mode->hdisplay, drm_mode->vdisplay,
+                             drm_mode->hdisplay * sizeof(uint32_t));
+    // surface.setDrawRegion(0, 0, 400, 400);
+    player->renderSync(i, surface);
 
-    drmVBlank vbl = {0};
-    uint32_t high_crtc = (0 << DRM_VBLANK_HIGH_CRTC_SHIFT);
-    vbl.request.type =
-        (DRM_VBLANK_RELATIVE | (high_crtc & DRM_VBLANK_HIGH_CRTC_MASK));
+    usleep(1000000 / 15);
+
+    drmVBlank vbl = {};
+    vbl.request.type = DRM_VBLANK_RELATIVE;
     vbl.request.sequence = 1;
     if (drmWaitVBlank(fd, &vbl) != 0) {
       perror("Failed to call drmWaitVBlank");
@@ -126,32 +127,49 @@ int main() {
     }
   }
 
+  // clock_gettime(CLOCK_MONOTONIC, &t1);
+  // for (uint32_t i = 0;; i++) {
+  //   clock_gettime(CLOCK_MONOTONIC, &t2);
+  //   long long elapsed_ns =
+  //       1000000000ll * (t2.tv_sec - t1.tv_sec) + (t2.tv_nsec - t1.tv_nsec);
+  //   if (elapsed_ns > 3000000000ll) {
+  //     break;
+  //   }
+
+  //   for (uint32_t y = 100; y < 100 + 320; y++) {
+  //     for (uint32_t x = 100; x < 100 + 240; x++) {
+  //       uint32_t c = ((i + x) * 2 & 0xff) + (((i + y) * 2 & 0xff) << 8);
+  //       fb_vaddr[y * (fb_pitch / sizeof(uint32_t)) + x] = c;
+  //     }
+  //   }
+
+  //   drmVBlank vbl = {};
+  //   vbl.request.type = DRM_VBLANK_RELATIVE;
+  //   vbl.request.sequence = 1;
+  //   if (drmWaitVBlank(fd, &vbl) != 0) {
+  //     perror("Failed to call drmWaitVBlank");
+  //     goto cleanup;
+  //   }
+  // }
+
 cleanup:
-  // Restore CRTC
-  if (drm_crtc) {
+  if (drm_crtc)
     drmModeSetCrtc(fd, drm_crtc->crtc_id, drm_crtc->buffer_id, drm_crtc->x,
                    drm_crtc->y, &drm_connector->connector_id, 1,
                    &drm_crtc->mode);
+  if (drm_crtc)
     drmModeFreeCrtc(drm_crtc);
-  }
-
-  // Cleanup framebuffer
   if (fb_vaddr)
     munmap(fb_vaddr, fb_size);
   if (fb_id)
     drmModeRmFB(fd, fb_id);
-
-  // Destroy dumb buffer
   if (fb_handle)
     drmModeDestroyDumbBuffer(fd, fb_handle);
-
-  // Free DRM resources
-  if (drm_connector)
+  if (drm_connector != NULL)
     drmModeFreeConnector(drm_connector);
   if (drm_resources)
     drmModeFreeResources(drm_resources);
   close(fd);
-
   return 0;
 }
 
@@ -170,8 +188,10 @@ cleanup:
 // https://wiki.archlinux.org/title/Dynamic_Kernel_Module_Support
 // https://wiki.archlinux.org/title/Kernel_mode_setting
 // https://www.kernel.org/doc/html/v6.12/gpu/drm-internals.html
+// https://www.kernel.org/doc/html/v6.12/gpu/drm-uapi.html
 // https://fedoraproject.org/wiki/Changes/ReplaceFbdevDrivers
 // https://blog.csdn.net/fengchaochao123/article/details/135262216
+// https://docs.nvidia.com/jetson/l4t-multimedia/group__direct__rendering__manager.html
 
-// cc -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer
-// cc sdsplash.c -o sdsplash -I/usr/include/drm -ldrm -Wall -Wextra -g
+// gcc sdsplash.c -o sdsplash -I/usr/include/drm -ldrm -Wall -Wextra -g -Og
+// -fsanitize=address,undefined -fno-omit-frame-pointer

@@ -1,3 +1,8 @@
 /.vscode
 /sdsplash
 /ref-*
+/third_party
+/rlottie
+/build
+/.cache
+/.clangd
