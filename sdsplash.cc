@@ -1,18 +1,13 @@
+#include "thorvg.h"
+#include "xf86drm.h"
+#include "xf86drmMode.h"
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
-
 #include <vector>
-
-#include "xf86drm.h"
-#include "xf86drmMode.h"
-
-#include "thorvg.h"
-
-#include "rapidjson/document.h"
 
 int main() {
   // Open DRM device
@@ -135,9 +130,9 @@ int main() {
       frames.push_back(frame);
     }
 
-    for (uint32_t i = 0; i < animation->totalFrame(); i++) {
+    for (size_t i = 0, l = animation->totalFrame(); i < l * 2; i++) {
       for (size_t y = 0; y != v_h; y++) {
-        memcpy(fb_vaddr + y * mode->hdisplay, frames[i].data() + y * v_w,
+        memcpy(fb_vaddr + y * mode->hdisplay, frames[i % l].data() + y * v_w,
                v_w * sizeof(uint32_t));
       }
 
@@ -170,6 +165,7 @@ cleanup:
   if (res)
     drmModeFreeResources(res);
   close(fd);
+  sleep(999);
   return 0;
 }
 

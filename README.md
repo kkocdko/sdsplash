@@ -11,7 +11,7 @@
 }
 ```
 
-- Double buffered.
+<!-- - Double buffered. -->
 - Lottie using rlottie.
 - https://github.com/Samsung/rlottie/archive/e3026b1e1a516fff3c22d2b1b9f26ec864f89a82.tar.gz
 - multi thread soft render
