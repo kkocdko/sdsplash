@@ -9,10 +9,13 @@
 
 #include <rlottie.h>
 
+#include <vector>
+
 int main() {
   // auto view = rlottie::
   auto player = rlottie::Animation::loadFromFile("lottie.json");
-  printf("frameRate=%f\n", player->frameRate());
+  // rlottie::Animation()
+  // printf("frameRate=%f\n", player->frameRate());
 
   // Open DRM device
   int fd = -1;
@@ -109,24 +112,40 @@ int main() {
   }
 
   printf("totalFrame=%ld\n", player->totalFrame());
-  for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
-
-    rlottie::Surface surface(fb_vaddr, drm_mode->hdisplay, drm_mode->vdisplay,
+  {
+     clock_gettime(CLOCK_MONOTONIC, &t1);
+ 
+    std::vector<uint32_t> frame(drm_mode->hdisplay * drm_mode->vdisplay);
+    rlottie::Surface surface(frame.data(), drm_mode->hdisplay,
+                             drm_mode->vdisplay,
                              drm_mode->hdisplay * sizeof(uint32_t));
-    // surface.setDrawRegion(0, 0, 400, 400);
-    player->renderSync(i, surface);
-
-    usleep(1000000 / 15);
-
-    drmVBlank vbl = {};
-    vbl.request.type = DRM_VBLANK_RELATIVE;
-    vbl.request.sequence = 1;
-    if (drmWaitVBlank(fd, &vbl) != 0) {
-      perror("Failed to call drmWaitVBlank");
-      goto cleanup;
+    surface.setDrawRegion(0, 0, 400, 400);
+    std::vector<std::vector<uint32_t>> frames;
+    for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
+      player->renderSync(i, surface);
+      frames.push_back(frame);
     }
-  }
 
+      clock_gettime(CLOCK_MONOTONIC, &t2);
+    long long elapsed_ns =
+        1000000000ll * (t2.tv_sec - t1.tv_sec) + (t2.tv_nsec - t1.tv_nsec);
+  printf("elapsed_ms=%lld\n", elapsed_ns/1000000);
+// for(int jj=0;jj<9;jj++){
+//     for (size_t i = 0, l = player->totalFrame(); i < l; i++) {
+//       memcpy((void *)fb_vaddr, frames[i].data(), fb_size);
+
+//       // usleep(1000000 / 15);
+
+//       drmVBlank vbl = {};
+//       vbl.request.type = DRM_VBLANK_RELATIVE;
+//       vbl.request.sequence = 1;
+//       if (drmWaitVBlank(fd, &vbl) != 0) {
+//         perror("Failed to call drmWaitVBlank");
+//         goto cleanup;
+//       }
+//     }
+// }
+  }
   // clock_gettime(CLOCK_MONOTONIC, &t1);
   // for (uint32_t i = 0;; i++) {
   //   clock_gettime(CLOCK_MONOTONIC, &t2);

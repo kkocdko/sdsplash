@@ -2,12 +2,15 @@ cmake_minimum_required(VERSION 3.21)
 project(sdsplash)
 
 # Optimize for size
-set(CMAKE_BUILD_TYPE MinSizeRel)
+set(CMAKE_BUILD_TYPE Release)
 
 # LTO
 # set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 # set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 # add_definitions(-DNDEBUG=1 -DwxDEBUG_LEVEL=0)
+
+# add_compile_options(-fsanitize=address)
+# add_link_options(-fsanitize=address)
 
 # Main executable
 add_executable(${PROJECT_NAME} ${PROJECT_SOURCE_DIR}/sdsplash.cc)
