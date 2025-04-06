@@ -1,0 +1,36 @@
+name: ci
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  linux-x64:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Build
+        shell: sudo bash -e {0}
+        run: |
+          type ninja meson tar curl gcc g++
+          rm -rf subprojects/drm subprojects/thorvg
+          mkdir -p subprojects/drm subprojects/thorvg
+          curl \
+            -o subprojects/drm.tar.gz -L https://gitlab.freedesktop.org/mesa/drm/-/archive/libdrm-2.4.124/drm-libdrm-2.4.124.tar.gz \
+            -o subprojects/thorvg.tar.gz -L https://github.com/thorvg/thorvg/archive/refs/tags/v1.0-pre18.tar.gz \
+            --skip-existing --parallel
+          tar -xf subprojects/drm.tar.gz --strip-components 1 -C subprojects/drm
+          tar -xf subprojects/thorvg.tar.gz --strip-components 1 -C subprojects/thorvg
+          rm -rf build
+          meson setup build --buildtype=release --strip --wrap-mode=forcefallback
+          meson compile -C build
+          # for _ in $(seq 10); do top -b -n 1 -e m -w 512 | grep sdsplash >> a.log; sleep 1; done
+          # rm -rf res examples/resources 
+          # mv bin/gcc/MP4Box mp4box
+          # strip mp4box
+          # zip -9 linux-x64.zip mp4box
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: "`github.workflow_sha = ${{ github.workflow_sha }}`"
+          prerelease: true
+          tag_name: "${{ 'asset_mp4box_2.4.0_' }}${{ github.run_id }}"
+          files: linux-x64.zip

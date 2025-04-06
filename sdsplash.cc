@@ -1,13 +1,14 @@
-#include "thorvg.h"
-#include "xf86drm.h"
-#include "xf86drmMode.h"
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <thorvg.h>
 #include <time.h>
 #include <unistd.h>
 #include <vector>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
 
 int main() {
   // Open DRM device
@@ -104,44 +105,84 @@ int main() {
   }
 
   {
+    // clang-format off
+    #define vp_illegal(expr) if (expr) { perror("env var VIEWPORT is illegal"); goto cleanup; }
+    // clang-format on
+    // "w=256,h=256,x=0,y=0", "w=min*0.5,h=min*0.5,x=center,y=center"
+    char *vp_env = getenv("VIEWPORT");
+    vp_illegal(vp_env == NULL);
+    uint16_t min_wh = std::min(mode->hdisplay, mode->vdisplay);
+    char *vp_w_env = strstr(vp_env, "w=");
+    vp_illegal(vp_w_env == NULL);
+    vp_w_env += 2;
+    char *vp_h_env = strstr(vp_env, "h=");
+    vp_illegal(vp_h_env == NULL);
+    vp_h_env += 2;
+    char *vp_x_env = strstr(vp_env, "x=");
+    vp_illegal(vp_x_env == NULL);
+    vp_x_env += 2;
+    char *vp_y_env = strstr(vp_env, "y=");
+    vp_illegal(vp_y_env == NULL);
+    vp_y_env += 2;
+    for (char *p = vp_env; *p != '\0'; p++)
+      if (*p == ',')
+        *p = '\0';
+    uint16_t vp_w = strncmp(vp_w_env, "min*", 4) == 0
+                        ? atof(vp_w_env + 4) * min_wh
+                        : atoi(vp_w_env);
+    uint16_t vp_h = strncmp(vp_h_env, "min*", 4) == 0
+                        ? atof(vp_h_env + 4) * min_wh
+                        : atoi(vp_h_env);
+    uint16_t vp_x = strcmp(vp_x_env, "center") == 0
+                        ? (mode->hdisplay - vp_w) / 2
+                        : atoi(vp_x_env);
+    uint16_t vp_y = strcmp(vp_y_env, "center") == 0
+                        ? (mode->vdisplay - vp_h) / 2
+                        : atoi(vp_y_env);
+    printf("vp_w=%d, vp_h=%d, vp_x=%d, vp_y=%d\n", vp_w, vp_h, vp_x, vp_y);
+    char *lottie_file_env = getenv("LOTTIE_FILE");
+    if (lottie_file_env == NULL) {
+      perror("env var LOTTIE_FILE is illegal");
+      goto cleanup;
+    }
+    char *lottie_speed_env = getenv("LOTTIE_SPEED");
+    float lottie_speed = lottie_speed_env ? atof(lottie_speed_env) : 1.0;
+    char *lottie_loop_env = getenv("LOTTIE_LOOP");
+    int lottie_loop = lottie_loop_env ? atoi(lottie_loop_env) : 1;
+    printf("lottie_file=%s, lottie_speed=%f\n", lottie_file_env, lottie_speed);
+
     tvg::Initializer::init(0, tvg::CanvasEngine::Sw);
 
     std::vector<std::vector<uint32_t>> frames;
-
-    size_t v_w = 400;
-    size_t v_h = 400;
-    std::vector<uint32_t> frame(v_w * v_h);
-
-    auto canvas = tvg::SwCanvas::gen();
-    canvas->target(frame.data(), v_w, v_w, v_h, tvg::ColorSpace::ARGB8888);
-
-    auto animation = tvg::Animation::gen();
-    auto picture = animation->picture();
-    picture->load("lottie.json");
-    picture->size(400, 400);
+    tvg::SwCanvas *canvas = tvg::SwCanvas::gen();
+    std::vector<uint32_t> frame(vp_w * vp_h);
+    canvas->target(frame.data(), vp_w, vp_w, vp_h, tvg::ColorSpace::ARGB8888);
+    tvg::Animation *animation = tvg::Animation::gen();
+    tvg::Picture *picture = animation->picture();
+    picture->load(lottie_file_env);
+    picture->size(vp_w, vp_h);
     canvas->push(picture);
-
-    for (size_t i = 0, l = animation->totalFrame(); i < l; i++) {
-      memset(frame.data(), 0, frame.size() * sizeof(uint32_t));
+    for (float i = 0, l = animation->totalFrame(); i < l; i += lottie_speed) {
       animation->frame(i);
       canvas->update();
-      canvas->draw();
+      canvas->draw(true);
       canvas->sync();
       frames.push_back(frame);
     }
 
-    for (size_t i = 0, l = animation->totalFrame(); i < l * 2; i++) {
-      for (size_t y = 0; y != v_h; y++) {
-        memcpy(fb_vaddr + y * mode->hdisplay, frames[i % l].data() + y * v_w,
-               v_w * sizeof(uint32_t));
-      }
+    for (int i = 0; i < lottie_loop; i++) {
+      for (auto &frame : frames) {
+        for (size_t y = 0; y != vp_h; y++)
+          memcpy(fb_vaddr + (vp_y + y) * mode->hdisplay + vp_x,
+                 frame.data() + y * vp_w, vp_w * sizeof(uint32_t));
 
-      drmVBlank vbl = {};
-      vbl.request.type = DRM_VBLANK_RELATIVE;
-      vbl.request.sequence = 1;
-      if (drmWaitVBlank(fd, &vbl) != 0) {
-        perror("Failed to call drmWaitVBlank");
-        goto cleanup;
+        drmVBlank vbl = {};
+        vbl.request.type = DRM_VBLANK_RELATIVE;
+        vbl.request.sequence = 1;
+        if (drmWaitVBlank(fd, &vbl) != 0) {
+          perror("Failed to call drmWaitVBlank");
+          goto cleanup;
+        }
       }
     }
 
@@ -165,29 +206,5 @@ cleanup:
   if (res)
     drmModeFreeResources(res);
   close(fd);
-  sleep(999);
   return 0;
 }
-
-// goals:
-// * apng or webp or gif or lottie or rive support
-// * use linux simpledrm
-// * lightweight and high fps
-
-// https://gitlab.freedesktop.org/plymouth/plymouth
-// https://gitlab.freedesktop.org/mesa/drm
-// https://github.com/Samsung/rlottie
-// https://github.com/dvdhrm/docs
-// https://gitlab.freedesktop.org/plymouth/plymouth/-/archive/main/plymouth-main.tar.gz
-// https://wiki.archlinux.org/title/Plymouth
-// https://wiki.archlinux.org/title/Silent_boot
-// https://wiki.archlinux.org/title/Dynamic_Kernel_Module_Support
-// https://wiki.archlinux.org/title/Kernel_mode_setting
-// https://www.kernel.org/doc/html/v6.12/gpu/drm-internals.html
-// https://www.kernel.org/doc/html/v6.12/gpu/drm-uapi.html
-// https://fedoraproject.org/wiki/Changes/ReplaceFbdevDrivers
-// https://blog.csdn.net/fengchaochao123/article/details/135262216
-// https://docs.nvidia.com/jetson/l4t-multimedia/group__direct__rendering__manager.html
-
-// gcc sdsplash.c -o sdsplash -I/usr/include/drm -ldrm -Wall -Wextra -g -Og
-// -fsanitize=address,undefined -fno-omit-frame-pointer
