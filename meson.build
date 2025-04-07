@@ -24,9 +24,9 @@ thorvg_dep = dependency('thorvg',
     'loaders=lottie',
     'engines=sw',
     'threads=false',
-    'simd=true',
+    'simd=false',
     'extra='
-  ],
+  ]
 )
 
 executable('sdsplash', 'sdsplash.cc',

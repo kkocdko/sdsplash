@@ -10,7 +10,28 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
-int main() {
+int main() { // int argc, char* argv[]
+  char *lottie_file_env = getenv("LOTTIE_FILE");
+  if (lottie_file_env == NULL) {
+    perror("Env var LOTTIE_FILE is illegal");
+    printf("Usage: ./sdsplash\n"
+           "Env vars:\n"
+           "  LOTTIE_FILE=./lottie.1.json\n"
+           "  LOTTIE_SPEED=1.0\n"
+           "  LOTTIE_LOOP=2\n"
+           "  VIEWPORT=w=min*0.5,h=min*0.5,x=center,y=center\n"
+           "  VIEWPORT=w=min*0.2,h=min*0.2,x=center,y=96\n"
+           "  VIEWPORT=w=256,h=256,x=0,y=0\n");
+    return 1;
+  }
+  char *lottie_speed_env = getenv("LOTTIE_SPEED");
+  float lottie_speed = lottie_speed_env ? atof(lottie_speed_env) : 1.0;
+  char *lottie_loop_env = getenv("LOTTIE_LOOP");
+  int lottie_loop = lottie_loop_env ? atoi(lottie_loop_env) : 1;
+  printf("lottie_file=%s, lottie_speed=%f, lottie_loop=%d\n", lottie_file_env,
+         lottie_speed, lottie_loop);
+  // todo: handle SIGINT to exit two-way playing
+
   // Open DRM device
   int fd = -1;
   char dev_path[] = "/dev/dri/card*";
@@ -105,25 +126,20 @@ int main() {
   }
 
   {
-    // clang-format off
-    #define vp_illegal(expr) if (expr) { perror("env var VIEWPORT is illegal"); goto cleanup; }
-    // clang-format on
-    // "w=256,h=256,x=0,y=0", "w=min*0.5,h=min*0.5,x=center,y=center"
     char *vp_env = getenv("VIEWPORT");
-    vp_illegal(vp_env == NULL);
+    if (!vp_env) {
+      vp_env = strdup("w=min*0.5,h=min*0.5,x=center,y=center"); // allow leaking
+    }
     uint16_t min_wh = std::min(mode->hdisplay, mode->vdisplay);
     char *vp_w_env = strstr(vp_env, "w=");
-    vp_illegal(vp_w_env == NULL);
-    vp_w_env += 2;
     char *vp_h_env = strstr(vp_env, "h=");
-    vp_illegal(vp_h_env == NULL);
-    vp_h_env += 2;
     char *vp_x_env = strstr(vp_env, "x=");
-    vp_illegal(vp_x_env == NULL);
-    vp_x_env += 2;
     char *vp_y_env = strstr(vp_env, "y=");
-    vp_illegal(vp_y_env == NULL);
-    vp_y_env += 2;
+    if (!vp_w_env || !vp_h_env || !vp_x_env || !vp_y_env) {
+      perror("Env var VIEWPORT is illegal");
+      goto cleanup;
+    }
+    vp_w_env += 2, vp_h_env += 2, vp_x_env += 2, vp_y_env += 2;
     for (char *p = vp_env; *p != '\0'; p++)
       if (*p == ',')
         *p = '\0';
@@ -140,16 +156,6 @@ int main() {
                         ? (mode->vdisplay - vp_h) / 2
                         : atoi(vp_y_env);
     printf("vp_w=%d, vp_h=%d, vp_x=%d, vp_y=%d\n", vp_w, vp_h, vp_x, vp_y);
-    char *lottie_file_env = getenv("LOTTIE_FILE");
-    if (lottie_file_env == NULL) {
-      perror("env var LOTTIE_FILE is illegal");
-      goto cleanup;
-    }
-    char *lottie_speed_env = getenv("LOTTIE_SPEED");
-    float lottie_speed = lottie_speed_env ? atof(lottie_speed_env) : 1.0;
-    char *lottie_loop_env = getenv("LOTTIE_LOOP");
-    int lottie_loop = lottie_loop_env ? atoi(lottie_loop_env) : 1;
-    printf("lottie_file=%s, lottie_speed=%f\n", lottie_file_env, lottie_speed);
 
     tvg::Initializer::init(0, tvg::CanvasEngine::Sw);
 
