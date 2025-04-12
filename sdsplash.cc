@@ -59,11 +59,11 @@ int main() { // int argc, char* argv[]
     dev_path[sizeof(dev_path) - 1 - 1] = '0' + i;
     fd = open(dev_path, O_RDWR | O_CLOEXEC);
   }
-  Defer defer_fd([&]() { close(fd); });
   if (fd == -1) {
     perror("Failed to open DRM device");
     return 1;
   }
+  Defer defer_fd([&]() { close(fd); });
 
   drmModeRes *res = drmModeGetResources(fd);
   if (!res) {
@@ -75,12 +75,10 @@ int main() { // int argc, char* argv[]
   drmModeConnector *conn = NULL;
   for (int i = 0; i < res->count_connectors; i++) {
     conn = drmModeGetConnector(fd, res->connectors[i]);
-    if (conn->connection == DRM_MODE_CONNECTED) {
+    if (conn->connection == DRM_MODE_CONNECTED)
       break;
-    } else {
-      drmModeFreeConnector(conn);
-      conn = NULL;
-    }
+    drmModeFreeConnector(conn);
+    conn = NULL;
   }
   if (!conn) {
     perror("No connected display found");
@@ -94,13 +92,17 @@ int main() { // int argc, char* argv[]
   drmModeModeInfo *mode = &conn->modes[0]; // Use the first mode
 
   // Store CRTC
+  if (res->count_crtcs == 0) {
+    perror("No valid CRTC for connector");
+    return 1;
+  }
   drmModeCrtc *crtc = drmModeGetCrtc(fd, res->crtcs[0]);
   if (!crtc) {
     perror("Failed to get CRTC");
     return 1;
   }
   Defer defer_crtc([&]() {
-    // Restore CRTC
+    // Restore to origin CRTC
     drmModeSetCrtc(fd, crtc->crtc_id, crtc->buffer_id, crtc->x, crtc->y,
                    &conn->connector_id, 1, &crtc->mode);
     drmModeFreeCrtc(crtc);
