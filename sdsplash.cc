@@ -25,33 +25,41 @@ static std::atomic<bool> loop_finished{false};
 static void signal_handler(int signal) {
   if (signal == SIGINT) {
     loop_finished = true;
-    printf("received SIGINT, finishing loop\n");
+    printf("Received SIGINT, finishing loop\n");
   }
 }
 
-int main() { // int argc, char* argv[]
-  char *lottie_file_env = getenv("LOTTIE_FILE");
-  if (lottie_file_env == NULL) {
-    perror("Env var LOTTIE_FILE is illegal");
-    printf("Usage: ./sdsplash\n"
-           "Env vars:\n"
-           "  LOTTIE_FILE=./lottie.1.json\n"
-           "  LOTTIE_SPEED=1.0\n"
-           "  LOTTIE_LOOP=2\n"
-           "  VIEWPORT=w=min*0.5,h=min*0.5,x=center,y=center\n"
-           "  VIEWPORT=w=min*0.2,h=min*0.2,x=center,y=96\n"
-           "  VIEWPORT=w=256,h=256,x=0,y=0\n");
+int main(int argc, char *argv[]) {
+  char *arg_file = NULL;
+  float arg_speed = 1.0;
+  int arg_loop = 1;
+  char *arg_viewport = NULL;
+  for (int i = 1; i + 1 < argc; i += 2) {
+    if (strcmp("--file", argv[i]) == 0) {
+      arg_file = argv[i + 1];
+    } else if (strcmp("--speed", argv[i]) == 0) {
+      arg_speed = atof(argv[i + 1]);
+    } else if (strcmp("--loop", argv[i]) == 0) {
+      arg_loop = atoi(argv[i + 1]);
+    } else if (strcmp("--viewport", argv[i]) == 0) {
+      arg_viewport = argv[i + 1];
+    } else {
+      printf("unknown argument: %s\n", argv[i]);
+      return 1;
+    }
+  }
+  if (arg_file == NULL) {
+    printf("usage: sdsplash --file lottie.json [options]\n\n"
+           "options:\n"
+           "  --speed 1.0  # from 0.001 to 999.0\n"
+           "  --loop 1     # from 1 to 999999\n"
+           "  --viewport   'w=min*0.5,h=min*0.5,x=center,y=center'\n"
+           "               'w=min*0.2,h=min*0.2,x=center,y=96'\n"
+           "               'w=256,h=256,x=0,y=0'\n");
     return 1;
   }
-  char *lottie_speed_env = getenv("LOTTIE_SPEED");
-  float lottie_speed = lottie_speed_env ? atof(lottie_speed_env) : 1.0;
-  char *lottie_loop_env = getenv("LOTTIE_LOOP");
-  int lottie_loop = lottie_loop_env ? atoi(lottie_loop_env) : 1;
-  printf("lottie_file=%s, lottie_speed=%f, lottie_loop=%d\n", lottie_file_env,
-         lottie_speed, lottie_loop);
-  // todo: handle SIGINT to exit two-way playing
 
-  signal(SIGINT, signal_handler);
+  // todo: handle SIGINT to exit two-way playing
 
   int fd = -1;
   char dev_path[] = "/dev/dri/card*";
@@ -153,32 +161,29 @@ int main() { // int argc, char* argv[]
     return 1;
   }
 
-  char *vp_env = getenv("VIEWPORT");
-  if (!vp_env)
-    vp_env = strdup("w=min*0.5,h=min*0.5,x=center,y=center"); // allow leaking
+  if (!arg_viewport)
+    arg_viewport = strdup("w=min*0.5,h=min*0.5,x=center,y=center"); // leaking
   uint16_t min_wh = std::min(mode->hdisplay, mode->vdisplay);
-  char *vp_w_env = strstr(vp_env, "w=");
-  char *vp_h_env = strstr(vp_env, "h=");
-  char *vp_x_env = strstr(vp_env, "x=");
-  char *vp_y_env = strstr(vp_env, "y=");
-  if (!vp_w_env || !vp_h_env || !vp_x_env || !vp_y_env) {
-    perror("Env var VIEWPORT is illegal");
+  char *vp_w_s = strstr(arg_viewport, "w=");
+  char *vp_h_s = strstr(arg_viewport, "h=");
+  char *vp_x_s = strstr(arg_viewport, "x=");
+  char *vp_y_s = strstr(arg_viewport, "y=");
+  if (!vp_w_s || !vp_h_s || !vp_x_s || !vp_y_s) {
+    printf("Illegal viewport\n");
     return 1;
   }
-  vp_w_env += 2, vp_h_env += 2, vp_x_env += 2, vp_y_env += 2;
-  for (char *p = vp_env; *p != '\0'; p++)
+  vp_w_s += 2, vp_h_s += 2, vp_x_s += 2, vp_y_s += 2;
+  for (char *p = arg_viewport; *p != '\0'; p++)
     if (*p == ',')
       *p = '\0';
-  uint16_t vp_w = strncmp(vp_w_env, "min*", 4) == 0
-                      ? atof(vp_w_env + 4) * min_wh
-                      : atoi(vp_w_env);
-  uint16_t vp_h = strncmp(vp_h_env, "min*", 4) == 0
-                      ? atof(vp_h_env + 4) * min_wh
-                      : atoi(vp_h_env);
-  uint16_t vp_x = strcmp(vp_x_env, "center") == 0 ? (mode->hdisplay - vp_w) / 2
-                                                  : atoi(vp_x_env);
-  uint16_t vp_y = strcmp(vp_y_env, "center") == 0 ? (mode->vdisplay - vp_h) / 2
-                                                  : atoi(vp_y_env);
+  uint16_t vp_w = strncmp(vp_w_s, "min*", 4) == 0 ? atof(vp_w_s + 4) * min_wh
+                                                  : atoi(vp_w_s);
+  uint16_t vp_h = strncmp(vp_h_s, "min*", 4) == 0 ? atof(vp_h_s + 4) * min_wh
+                                                  : atoi(vp_h_s);
+  uint16_t vp_x = strcmp(vp_x_s, "center") == 0 ? (mode->hdisplay - vp_w) / 2
+                                                : atoi(vp_x_s);
+  uint16_t vp_y = strcmp(vp_y_s, "center") == 0 ? (mode->vdisplay - vp_h) / 2
+                                                : atoi(vp_y_s);
   printf("vp_w=%d, vp_h=%d, vp_x=%d, vp_y=%d\n", vp_w, vp_h, vp_x, vp_y);
 
   tvg::Initializer::init(0, tvg::CanvasEngine::Sw);
@@ -190,10 +195,10 @@ int main() { // int argc, char* argv[]
   canvas->target(frame.data(), vp_w, vp_w, vp_h, tvg::ColorSpace::ARGB8888);
   tvg::Animation *animation = tvg::Animation::gen();
   tvg::Picture *picture = animation->picture();
-  picture->load(lottie_file_env);
+  picture->load(arg_file);
   picture->size(vp_w, vp_h);
   canvas->push(picture);
-  for (float i = 0, l = animation->totalFrame(); i < l; i += lottie_speed) {
+  for (float i = 0, l = animation->totalFrame(); i < l; i += arg_speed) {
     animation->frame(i);
     canvas->update();
     canvas->draw(true);
@@ -201,7 +206,8 @@ int main() { // int argc, char* argv[]
     frames.push_back(frame);
   }
 
-  for (int i = 0; i < lottie_loop && !loop_finished; i++) {
+  signal(SIGINT, signal_handler);
+  for (int i = 0; i < arg_loop && !loop_finished; i++) {
     for (auto &frame : frames) {
       for (size_t y = 0; y != vp_h; y++)
         memcpy(fb_vaddr + (vp_y + y) * mode->hdisplay + vp_x,

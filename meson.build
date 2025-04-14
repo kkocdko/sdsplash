@@ -30,6 +30,6 @@ thorvg_dep = dependency('thorvg',
 )
 
 executable('sdsplash', 'sdsplash.cc',
-  dependencies: [thorvg_dep, drm_dep],
+  dependencies: [drm_dep, thorvg_dep],
   install: false
 )
